@@ -31,7 +31,7 @@ void Config::Load(string filename, vector<string> included_already)
 	config_values["aggression"] = "uint";
 	config_values["worksize"] = "uint";
 	config_values["threads_per_gpu"] = "uint";
-	config_values["device"] = "array";
+	config_values["device"] = "uint array";
 	config_values["kernel"] = "string";
 	config_values["save_binaries"] = "bool";
 	config_values["cpu_mining_threads"] = "uint";
@@ -44,6 +44,15 @@ void Config::Load(string filename, vector<string> included_already)
 	config_values["proxy"] = "string";
 	config_values["long_polling"] = "bool";
 	config_values["include"] = "string";
+	config_values["cpu_algorithm"] = "string";
+	config_values["protocol"] = "string";
+	config_values["mine"] = "string";
+	config_values["gpu_sharemask"] = "string";
+	config_values["vectors"] = "uint";
+	config_values["sharethreads"] = "uint";
+	config_values["dont_check_shares"] = "bool";
+	config_values["lookup_gap"] = "uint";
+	config_values["gpu_thread_concurrency"] = "uint";
 
 	ifstream filu(filename.c_str());
 	while(!filu.eof())
@@ -96,40 +105,3 @@ void Config::Load(string filename, vector<string> included_already)
 	}
 	included_already.pop_back();
 }
-
-#include <algorithm>
-
-/*
-//function disabled because of "include" functionality
-void Config::Save(string filename)
-{
-	ofstream filu(filename.c_str());
-
-	vector<string> prioritykeys;
-	prioritykeys.push_back("host");
-	prioritykeys.push_back("port");
-	prioritykeys.push_back("user");
-	prioritykeys.push_back("pass");
-
-	for(vector<string>::iterator it = prioritykeys.begin(); it != prioritykeys.end(); ++it)
-	{
-		if (config.find(*it) == config.end())
-			continue;
-		for(uint i=0; i<config[*it].size(); ++i)
-		{
-			filu << *it << " " << config[*it][i] << endl;
-		}
-	}
-	filu << endl;
-
-	for(map<string,vector<string> >::iterator it = config.begin(); it != config.end(); ++it)
-	{
-		if (std::find(prioritykeys.begin(), prioritykeys.end(),  it->first) != prioritykeys.end())
-			continue;
-		for(uint i=0; i<it->second.size(); ++i)
-		{
-			filu << it->first << " " << it->second[i] << endl;
-		}
-	}
-}
-*/

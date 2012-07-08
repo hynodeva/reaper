@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 #include <vector>
 #include <iostream>
@@ -20,17 +21,37 @@ typedef unsigned int uint;
 typedef unsigned short ushort;
 typedef unsigned char uchar;
 
-//this struct has been deprecated, possibly.
-struct GlobalConfs
+#include "Config.h"
+
+struct Coin
 {
+	string name;
+	string protocol;
+	Config config;
 	uint global_worksize;
 	uint local_worksize;
 	uint threads_per_gpu;
-	vector<uint> devices;
-	bool save_binaries;
-	uint cputhreads;
-	uint platform;
 	bool max_aggression;
+	double sharekhs;
+
+	uint cputhreads;
+	string cpu_algorithm;
+	string host,port,user,pass,proxy;
+};
+
+struct GlobalConfs
+{
+	bool save_binaries;
+	vector<uint> devices;
+	uint platform;
+	Coin coin;
+};
+
+enum SHARETEST_VALUE
+{
+	ST_HNOTZERO,
+	ST_MORETHANTARGET,
+	ST_GOOD,
 };
 
 extern GlobalConfs globalconfs;
