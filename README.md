@@ -2,19 +2,15 @@
 Reaper
 ======
 
-Reaper is the first [OpenCL](http://en.wikipedia.org/wiki/Opencl) GPU  miner for
-SolidCoin 2.0, coded by mtrlt, currently in an early stage of development. It is
+
+Reaper is a [OpenCL](http://en.wikipedia.org/wiki/Opencl) GPU  miner for
+Scrypt & SHA256D CryptoCoins, coded by mtrlt & hynodeva.com , currently in an early stage of development. It is
 open source and licensed under the GPL 3.0.
 
-Reaper works well on both ATI and Nvidia GPUs. Although ATI GPUs appear to be
-more efficient, many types of GPU remain untested. Users are encouraged to
-experiment with the software and try to attain the best hash rate they can and
-post their results on the official SolidCoin forum so they can be included in
-the Mining Hardware Performance page.
+Reaper is commonly used for scrypt mining.
 
-As well as supporting GPU mining, Reaper can be configured to mine with the CPU
-too. Enabling CPU mining does not normally have an impact on GPU mining hash
-rates.
+Reaper works on both ATI and Nvidia GPUs. Although ATI GPUs appear to be way
+more efficient, many types of GPU remain untested.
 
 How to use
 ----------
@@ -30,12 +26,6 @@ The default configuration file name is **reaper.conf** which should be located
 in the same directory as the executable.
 The available configuration options are:
 
-    cpu_mining_threads [number]
-
-Used to specify on how many threads you want to mine on your CPU(s).
-
-Recommended value: Number of logical cores. For example, if you have a quad core
-CPU set this to 4. If you have a quad core with Hyper Threading, set it to 8.
 
     device [number]
 
