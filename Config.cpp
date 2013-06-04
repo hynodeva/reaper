@@ -30,6 +30,7 @@ void Config::Load(string filename, vector<string> included_already)
 	map<string, string> config_values;
 	config_values["aggression"] = "uint";
 	config_values["worksize"] = "uint";
+	config_values["localworksize"] = "uint";
 	config_values["threads_per_gpu"] = "uint";
 	config_values["device"] = "uint array";
 	config_values["kernel"] = "string";
@@ -52,7 +53,11 @@ void Config::Load(string filename, vector<string> included_already)
 	config_values["sharethreads"] = "uint";
 	config_values["dont_check_shares"] = "bool";
 	config_values["lookup_gap"] = "uint";
+	config_values["getwork_rate"] = "uint";
 	config_values["gpu_thread_concurrency"] = "uint";
+	config_values["use_noncerange"] = "bool";///@desc X-Mining-Extensions Enable Noncerange
+	config_values["use_noncerange_staticspeed"] = "uint";///@desc use static speed meter for noncerange getwork req.
+	
 
 	ifstream filu(filename.c_str());
 	while(!filu.eof())

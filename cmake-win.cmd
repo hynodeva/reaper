@@ -1,8 +1,10 @@
+echo "bitglow: don't forget to add Ws2_32.lib to linklibs"
 @echo off
+
 
 set builddir=build
 set buildarch=x86
-set buildgen=Visual Studio 10
+set buildgen=Visual Studio 11
 set buildtype=OFF
 call :do_setup
 set builddir=build_cpu
@@ -11,7 +13,7 @@ call :do_setup
 
 set builddir=build64
 set buildarch=x86_64
-set buildgen=Visual Studio 10 Win64
+set buildgen=Visual Studio 11 Win64
 set buildtype=OFF
 call :do_setup
 set builddir=build64_cpu

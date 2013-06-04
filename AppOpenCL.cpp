@@ -16,9 +16,7 @@ uint OpenCL::GetVectorSize()
 	return ret;
 }
 
-#ifndef CPU_MINING_ONLY
 vector<_clState> GPUstates;
-#endif
 
 extern pthread_mutex_t current_work_mutex;
 extern Work current_work;
@@ -48,7 +46,6 @@ extern uint *BlockHash_1_MemoryPAD32;
 extern ullint shares_hwinvalid;
 extern ullint shares_hwvalid;
 
-#include "RSHash.h"
 
 #include <deque>
 using std::deque;
@@ -167,167 +164,6 @@ void PreCalc(uchar* in, cl_uint8& s)
 
 void v3hash(uchar* input, uchar* scratch, uchar* output);
 
-void* Reap_GPU_SLC(void* param)
-{
-	_clState* state = (_clState*)param;
-	state->hashes = 0;
-
-	size_t globalsize = globalconfs.coin.global_worksize;
-	size_t localsize = globalconfs.coin.local_worksize;
-
-	Work tempwork;
-
-	uchar tempdata[1024];
-	memset(tempdata, 0, 1024);
-
-	clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[0], true, 0, KERNEL_INPUT_SIZE, tempdata, 0, NULL, NULL);
-	clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[1], true, 0, KERNEL_OUTPUT_SIZE*sizeof(uint), tempdata, 0, NULL, NULL);
-
-	uint kernel_output[KERNEL_OUTPUT_SIZE] = {};
-
-	bool write_kernel_output = true;
-	bool write_kernel_input = true;
-
-	uint scversion=2;
-	if (globalconfs.coin.name == "solidcoin3")
-		scversion=3;
-
-	size_t base = 0;
-	clSetKernelArg(state->kernel, 2, sizeof(cl_mem), &state->padbuffer8);
-
-	bool errorfree = true;
-	deque<uint> runtimes;
-	while(!shutdown_now)
-	{
-		if (globalconfs.coin.max_aggression && !runtimes.empty())
-		{
-			uint avg_runtime=0;
-			for(deque<uint>::iterator it = runtimes.begin(); it != runtimes.end(); ++it)
-			{
-				avg_runtime += *it;
-			}
-			avg_runtime /= (uint)runtimes.size();
-			if (avg_runtime > TARGET_RUNTIME_MS+TARGET_RUNTIME_ALLOWANCE_MS)
-			{
-				globalsize -= localsize;
-			}
-			else if (avg_runtime*3 < TARGET_RUNTIME_MS-TARGET_RUNTIME_ALLOWANCE_MS)
-			{
-				globalsize = (globalsize+globalsize/2)/localsize*localsize;
-			}
-			else if (avg_runtime < TARGET_RUNTIME_MS-TARGET_RUNTIME_ALLOWANCE_MS)
-			{
-				globalsize += localsize;
-			}
-		}
-		clock_t starttime = ticker();
-		if (current_work.old)
-		{
-			Wait_ms(20);
-			continue;
-		}
-		if (tempwork.time != current_work.time)
-		{
-			pthread_mutex_lock(&current_work_mutex);
-			tempwork = current_work;
-			pthread_mutex_unlock(&current_work_mutex);
-			memcpy(tempdata, &tempwork.data[0], 128);
-			*(uint*)&tempdata[100] = state->thread_id;
-			base = 0;
-			write_kernel_input = true;
-		}
-
-		ullint newtime = tempwork.ntime_at_getwork + (ticker()-tempwork.time)/1000;
-		if (*(ullint*)&tempdata[76] != newtime)
-		{
-			*(ullint*)&tempdata[76] = newtime;
-			write_kernel_input = true;
-		}
-		if (write_kernel_input)
-		{
-			cl_uint8 precalc;
-			PreCalc(tempdata,precalc);
-			clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[0], true, 0, KERNEL_INPUT_SIZE, tempdata, 0, NULL, NULL);
-			clSetKernelArg(state->kernel, 3, sizeof(cl_uint8), &precalc);
-		}
-		if (write_kernel_output)
-			clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[1], true, 0, KERNEL_OUTPUT_SIZE*sizeof(uint), kernel_output, 0, NULL, NULL);
-
-		clSetKernelArg(state->kernel, 0, sizeof(cl_mem), &state->CLbuffer[0]);
-		clSetKernelArg(state->kernel, 1, sizeof(cl_mem), &state->CLbuffer[1]);
-
-		cl_int returncode;
-		returncode = clEnqueueNDRangeKernel(state->commandQueue, state->kernel, 1, &base, &globalsize, &localsize, 0, NULL, NULL);
-		//OpenCL throws CL_INVALID_KERNEL_ARGS randomly, let's just ignore them.
-		if (returncode != CL_SUCCESS && returncode != CL_INVALID_KERNEL_ARGS && errorfree)
-		{
-			cout << humantime() << "Error " << returncode << " while trying to run OpenCL kernel" << endl;
-			errorfree = false;
-		}
-		else if ((returncode == CL_SUCCESS || returncode == CL_INVALID_KERNEL_ARGS) && !errorfree)
-		{
-			cout << humantime() << "Previous OpenCL error cleared" << endl;
-			errorfree = true;
-		}
-		clEnqueueReadBuffer(state->commandQueue, state->CLbuffer[1], true, 0, KERNEL_OUTPUT_SIZE*sizeof(uint), kernel_output, 0, NULL, NULL);
-
-		write_kernel_input = false;
-		write_kernel_output = false;
-		for(uint i=0; i<KERNEL_OUTPUT_SIZE; ++i)
-		{
-			if (kernel_output[i] == 0)
-				continue;
-			uint result = kernel_output[i];
-			uchar testmem[512];
-			uchar finalhash[32];
-
-			if (scversion == 2)
-			{
-				memcpy(testmem, tempdata, 128);
-				*((uint*)&testmem[108]) = result;
-				BlockHash_1(testmem, finalhash);
-			}
-			if (finalhash[31] != 0 || finalhash[30] != 0 || finalhash[29] >= 0x80)
-				++shares_hwinvalid;
-			else
-				++shares_hwvalid;
-			bool below=true;
-			for(int j=0; j<32; ++j)
-			{
-				if (finalhash[31-j] > tempwork.target_share[j])
-				{
-					below=false;
-					break;
-				}
-				if (finalhash[31-j] < tempwork.target_share[j])
-				{
-					break;
-				}
-			}
-			if (below)
-			{
-				vector<uchar> share(testmem, testmem+128);				
-				pthread_mutex_lock(&state->share_mutex);
-				state->shares_available = true;
-				state->shares.push_back(Share(share,tempwork.target_share,tempwork.server_id));
-				pthread_mutex_unlock(&state->share_mutex);
-			}
-			kernel_output[i] = 0;
-			write_kernel_output = true;
-		}
-		if (errorfree)
-		{
-			state->hashes += globalsize;
-		}
-		base += globalsize;
-		clock_t endtime = ticker();
-		runtimes.push_back(uint(endtime-starttime));
-		if (runtimes.size() > RUNTIMES_SIZE)
-			runtimes.pop_front();
-	}
-	pthread_exit(NULL);
-	return NULL;
-}
 
 #endif
 
@@ -433,6 +269,98 @@ uint NextNonce(uint vectors)
 	pthread_mutex_unlock(&noncemutex);
 	return ret;
 }
+///@todo attention unsigned int should be uint32!!!
+#define uint32_t unsigned int
+static inline void xor_salsa8(unsigned int B[16], const unsigned int Bx[16])
+{
+	unsigned int x00,x01,x02,x03,x04,x05,x06,x07,x08,x09,x10,x11,x12,x13,x14,x15;
+	int i;
+
+	x00 = (B[ 0] ^= Bx[ 0]);
+	x01 = (B[ 1] ^= Bx[ 1]);
+	x02 = (B[ 2] ^= Bx[ 2]);
+	x03 = (B[ 3] ^= Bx[ 3]);
+	x04 = (B[ 4] ^= Bx[ 4]);
+	x05 = (B[ 5] ^= Bx[ 5]);
+	x06 = (B[ 6] ^= Bx[ 6]);
+	x07 = (B[ 7] ^= Bx[ 7]);
+	x08 = (B[ 8] ^= Bx[ 8]);
+	x09 = (B[ 9] ^= Bx[ 9]);
+	x10 = (B[10] ^= Bx[10]);
+	x11 = (B[11] ^= Bx[11]);
+	x12 = (B[12] ^= Bx[12]);
+	x13 = (B[13] ^= Bx[13]);
+	x14 = (B[14] ^= Bx[14]);
+	x15 = (B[15] ^= Bx[15]);
+	for (i = 0; i < 8; i += 2) {
+#define R(a, b) (((a) << (b)) | ((a) >> (32 - (b))))
+		/* Operate on columns. */
+		x04 ^= R(x00+x12, 7);	x09 ^= R(x05+x01, 7);
+		x14 ^= R(x10+x06, 7);	x03 ^= R(x15+x11, 7);
+		
+		x08 ^= R(x04+x00, 9);	x13 ^= R(x09+x05, 9);
+		x02 ^= R(x14+x10, 9);	x07 ^= R(x03+x15, 9);
+		
+		x12 ^= R(x08+x04,13);	x01 ^= R(x13+x09,13);
+		x06 ^= R(x02+x14,13);	x11 ^= R(x07+x03,13);
+		
+		x00 ^= R(x12+x08,18);	x05 ^= R(x01+x13,18);
+		x10 ^= R(x06+x02,18);	x15 ^= R(x11+x07,18);
+		
+		/* Operate on rows. */
+		x01 ^= R(x00+x03, 7);	x06 ^= R(x05+x04, 7);
+		x11 ^= R(x10+x09, 7);	x12 ^= R(x15+x14, 7);
+		
+		x02 ^= R(x01+x00, 9);	x07 ^= R(x06+x05, 9);
+		x08 ^= R(x11+x10, 9);	x13 ^= R(x12+x15, 9);
+		
+		x03 ^= R(x02+x01,13);	x04 ^= R(x07+x06,13);
+		x09 ^= R(x08+x11,13);	x14 ^= R(x13+x12,13);
+		
+		x00 ^= R(x03+x02,18);	x05 ^= R(x04+x07,18);
+		x10 ^= R(x09+x08,18);	x15 ^= R(x14+x13,18);
+#undef R
+	}
+	B[ 0] += x00;
+	B[ 1] += x01;
+	B[ 2] += x02;
+	B[ 3] += x03;
+	B[ 4] += x04;
+	B[ 5] += x05;
+	B[ 6] += x06;
+	B[ 7] += x07;
+	B[ 8] += x08;
+	B[ 9] += x09;
+	B[10] += x10;
+	B[11] += x11;
+	B[12] += x12;
+	B[13] += x13;
+	B[14] += x14;
+	B[15] += x15;
+}
+//V is scratchpad, X Data
+static inline void scrypt_core_h(uint32_t *X, uint32_t *V)
+{
+	uint32_t i, j, k;
+	
+	for (i = 0; i < 1024; i++) {
+		memcpy(&V[i * 32], X, 128);
+		xor_salsa8(&X[0], &X[16]);
+		xor_salsa8(&X[16], &X[0]);
+	}
+	for (i = 0; i < 1024; i++) {
+		j = 32 * (X[16] & 1023);
+		for (k = 0; k < 32; k++)
+			X[k] ^= V[j + k];
+		xor_salsa8(&X[0], &X[16]);
+		xor_salsa8(&X[16], &X[0]);
+	}
+}
+
+///@brief	handles BTC GPU Execution for miner mode
+///@detail	handles BTC GPU Execution for miner mode
+///@param	void* to clstate structure for the handled gpu
+///@return	void* , not used
 void* Reap_GPU_BTC(void* param)
 {
 	_clState* state = (_clState*)param;
@@ -525,81 +453,203 @@ void* Reap_GPU_BTC(void* param)
 	pthread_exit(NULL);
 }
 
+
+
+
+
+
 int scanhash_scrypt(unsigned char *pdata, unsigned char *scratchbuf,
 	const unsigned char *ptarget);
 
+
 vector<uchar> CalculateMidstate(vector<uchar> in);
 
+///@brief	handles LTC GPU Execution for miner mode
+///@detail	handles LTC GPU Execution for miner mode
+///@param	void* to clstate structure for the handled gpu
+///@return	void* , not used
 void* Reap_GPU_LTC(void* param)
 {
+#ifdef HEAVYDEBUG
+cout << "REAP START" << endl;
+#endif
 	const uint TOTAL_OUTPUTS = KERNEL_OUTPUT_SIZE;
 	_clState* state = (_clState*)param;
 	state->hashes = 0;
-
+	state->roundnumber = 0;
+	uint gputhreads;
 	size_t globalsize = globalconfs.coin.global_worksize;
 	size_t localsize = globalconfs.coin.local_worksize;
-
+	size_t kernelinternsize=(globalconfs.coin.kernellocal_worksize/localsize)>>1;
+	globalsize=(globalsize/localsize);
+	globalsize=globalsize*localsize;
+	cl_uint kernelworkdim = 1;//globalconfs.coin.kernellocal_worksize;
+//	if(globalsize>((state->lastnonce)-(state->offset)))
+//	{
+//	    globalsize=(state->lastnonce)/(state->offset+1);
+//	    globalsize=(globalsize/localsize);
+//	    globalsize=globalsize*localsize;
+//	}
 	Work tempwork;
 
-	size_t nonce=state->offset;
-
-	uint gpu_outputs[TOTAL_OUTPUTS] = {};
-	clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[1], true, 0, TOTAL_OUTPUTS*sizeof(uint), gpu_outputs, 0, NULL, NULL);
+	size_t nonce=0;
+	if(state->offset>0)
+	{
+		nonce = ((current_work.lastnonce-current_work.firstnonce)/(state->offset+1))+current_work.firstnonce;
+	}
+	else
+	{
+		nonce = current_work.firstnonce;
+	}
+	uint overheadruns=0;
+	uint maxhits=0;
+	uint gpu_outputs[TOTAL_OUTPUTS] = {0};
+	clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[1], true, 0, (TOTAL_OUTPUTS)*sizeof(uint), gpu_outputs, 0, NULL, NULL);
 
 	vector<uchar> midstate;
 
 	while(true)
 	{
+#ifdef HEAVYDEBUG
+cout << "REAP WHILE START" << endl;
+#endif
 		if (current_work.old)
 		{
-			Wait_ms(20);
+			Wait_ms(10);
 			continue;
 		}
-		
-		if (tempwork.time != current_work.time)
+		if(state->noncerange_used)
 		{
-			pthread_mutex_lock(&current_work_mutex);
-			tempwork = current_work;
-			pthread_mutex_unlock(&current_work_mutex);
-			nonce = state->offset;
-			midstate = CalculateMidstate(tempwork.data);
+			Wait_ms(10);
+			continue;
 		}
+    
+#ifdef HEAVYDEBUG
+cout << "REAP WHILE GO" << endl;
+#endif
+		
+		if ((current_work.old) || (tempwork.time != current_work.time))
+		{
+//			if(tempwork.time > 0)
+//			{
+#ifdef HEAVYDEBUG
+				cout << "work update"<<endl;
+#endif
+				while(!(state->shares.empty()))
+				    Wait_ms(10);
+				//this aquires next work;
+				pthread_mutex_lock(&current_work_mutex);
+				tempwork = current_work;
+				pthread_mutex_unlock(&current_work_mutex);
+//				nonce = state->offset+tempwork.firstnonce;
+				if(state->offset>0)
+				{
+					nonce = (state->thread_id*((tempwork.lastnonce-tempwork.firstnonce)/(state->offset)))+tempwork.firstnonce;
+				//	tempwork.lastnonce=((state->thread_id+1)*((tempwork.lastnonce-tempwork.firstnonce)/(state->offset)))+tempwork.firstnonce;
+					tempwork.firstnonce=nonce;
+					if(((tempwork.lastnonce-nonce)<globalsize))
+					{
+					    nonce=tempwork.lastnonce;
+					    state->noncerange_used=true;
+					    continue;
+					}
+				}
+				else
+				{
+					nonce = tempwork.firstnonce;
+				}
+				state->roundnumber=0;
+//				printf("firstnonce  %u for %u\n",nonce,state->offset);
+				midstate = CalculateMidstate(tempwork.data);
+				//overheadruns=0;
+#ifdef HEAVYDEBUG
+				cout << "work update done"<<endl;
+#endif
+//			}
+//			else
+//				cout << "tempwork.time larger zero"<<endl;
+				
+		}
+//		state->offset=tempwork;
 		clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[0], true, 0, 80, &tempwork.data[0], 0, NULL,NULL);
 		clSetKernelArg(state->kernel,0,sizeof(cl_mem), &state->CLbuffer[0]);
 		clSetKernelArg(state->kernel,1,sizeof(cl_mem), &state->CLbuffer[1]);
 		clSetKernelArg(state->kernel,2,sizeof(cl_mem), &state->padbuffer8);
 		clSetKernelArg(state->kernel,3,sizeof(cl_uint4), &midstate[0]);
 		clSetKernelArg(state->kernel,4,sizeof(cl_uint4), &midstate[16]);
-		clEnqueueNDRangeKernel(state->commandQueue, state->kernel, 1, &nonce, &globalsize, &localsize, 0, NULL, NULL);
-		clEnqueueReadBuffer(state->commandQueue, state->CLbuffer[1], true, 0, TOTAL_OUTPUTS*sizeof(uint), gpu_outputs, 0, NULL, NULL);
+//#ifdef HEAVYDEBUG
+//		printf("gsize: %u| lsize: %u| nonce: %u| hashes: %u|offset: %X|rndnr: %u\ndata:%s\n",globalsize,localsize,nonce,state->hashes,state->offset,state->roundnumber,VectorToHexString(tempwork.data).c_str());
+//#endif
+///@todo globalsize&localsize &offset used for coordinated hashing due noncerange extension on pool
+///@todo lvl2 of this would precalc ranges to determine best chances for blockhit
+//printf("offset used %u\n",state->offset);
+		state->roundnumber++;
+		clEnqueueNDRangeKernel(state->commandQueue, state->kernel, kernelworkdim, &nonce, &globalsize, &localsize, 0, NULL, NULL);
+		clEnqueueReadBuffer(state->commandQueue, state->CLbuffer[1], true, 0, (TOTAL_OUTPUTS)*sizeof(uint), gpu_outputs, 0, NULL, NULL);
 		bool writeoutput=false;
-		for(uint i=0; i<TOTAL_OUTPUTS; ++i)
+		const uint hits=gpu_outputs[255];
+		gpu_outputs[255] = 0;
+		if(hits>maxhits)
 		{
-			if (!gpu_outputs[i])
-				continue;
+			maxhits=hits;
+			cout << "new max hitcount per kernel enqueing: " << maxhits <<" " << endl;
+		}
+//		if((gpu_outputs[255])>0)
+//			printf("hits: %u",hits);
+		for(uint i=0; i<hits; ++i)
+		{
+//			if (!gpu_outputs[i])
+//				continue;
+//			printf("globalsize: %u| localsize: %u| nonce: %u| hashes: %u|offset: %X hits:%u\n",globalsize,localsize,nonce,state->hashes,state->offset,hits);
+//			Work sharework;
+	//		sharework=tempwork;
 			uint* data = (uint*)&tempwork.data[76];
 			*data = gpu_outputs[i];
-			bool result = true;
-			
-			if (result)
+#ifdef HEAVYDEBUG
+			printf("noncehit: %u as hex: %X\n",*data,*data);
+#endif
+//			bool result = true;
+			if((*data!=0) || (nonce==0))
 			{
+//			if (result)
+//			{
+//				printf("shareworkdata:%s\n",VectorToHexString(sharework.data).c_str());
+//				printf("tempworkworkdata:%s\n",VectorToHexString(tempwork.data).c_str());
 				pthread_mutex_lock(&state->share_mutex);
 				state->shares.push_back(Share(tempwork.data,tempwork.target_share,tempwork.server_id));
 				state->shares_available = true;
 				pthread_mutex_unlock(&state->share_mutex);
 			}
-			else
-				++shares_hwvalid;
-			writeoutput=true;
+//			}
+//			else
+//				++shares_hwvalid;
+//			writeoutput=true;
 			gpu_outputs[i] = 0;
 		}
-		if (writeoutput)
+		gpu_outputs[255] = 0;
+	//	if ((writeoutput) | (hits>0))
 			clEnqueueWriteBuffer(state->commandQueue, state->CLbuffer[1], true, 0, TOTAL_OUTPUTS*sizeof(uint), gpu_outputs, 0, NULL, NULL);
-		state->hashes += globalsize;
+		state->hashes += globalsize ;
 		nonce += globalsize;
+		if((nonce + globalsize)>=tempwork.lastnonce)
+		{
+//			pthread_mutex_lock(&state->share_mutex);
+			state->noncerange_used=true;
+//			printf("noncerange used! thread : %u",state->offset);
+//			pthread_mutex_unlock(&state->share_mutex);
+//			current_work.old=current_work.rangeused=true;
+	//		current_work.time=0;
+			overheadruns++;
+#ifdef HEAVYDEBUG
+			printf("overheadruns: %u\n",overheadruns);
+#endif
+		}
+		//problem with this comes to sight when upstream connection is slow
 	}
 	pthread_exit(NULL);
 }
+
+
 
 _clState clState;
 
@@ -778,6 +828,7 @@ void OpenCL::Init()
 		{
 			filebinaryname += string("-") + ToString(globalconfs.coin.config.GetValue<string>("gpu_thread_concurrency"));
 			filebinaryname += string("-") + ToString(globalconfs.coin.config.GetValue<string>("lookup_gap"));
+			filebinaryname += string("-") + ToString(globalconfs.coin.config.GetValue<string>("localworksize"));
 		}
 		if (globalconfs.coin.protocol == "bitcoin")
 		{
@@ -820,6 +871,8 @@ void OpenCL::Init()
 
 			string compile_options;
 			compile_options += " -D WORKSIZE=" + ToString(globalconfs.coin.local_worksize);
+			compile_options += " -D KERNELLOCALWORKSIZE=" + ToString(globalconfs.coin.kernellocal_worksize);
+
 
 			bool amd_gpu = (std::find(extensions.begin(),extensions.end(), "cl_amd_media_ops") != extensions.end());
 
@@ -904,32 +957,29 @@ void OpenCL::Init()
 			cout << "Kernel build not successful: " << status << endl;
 			throw string("Error creating OpenCL kernel");
 		}
-		cl_mem padbuffer8;
-		if(globalconfs.coin.protocol == "solidcoin" || globalconfs.coin.protocol == "solidcoin3")
-		{
-			padbuffer8 = clCreateBuffer(clState.context, CL_MEM_READ_ONLY, 1024*1024*4+8, NULL, &status);
-		}
-		else if (globalconfs.coin.protocol == "litecoin")
-		{
-			ullint lookup_gap = globalconfs.coin.config.GetValue<ullint>("lookup_gap");
-			ullint thread_concurrency = globalconfs.coin.config.GetValue<ullint>("gpu_thread_concurrency");
-			ullint itemsperthread = (1024/lookup_gap+(1024%lookup_gap>0));
-			ullint bufsize = 128*itemsperthread*thread_concurrency;
-			cout << "LTC buffer size: " << bufsize/1024.0/1024.0 << "MB." << endl;
-			padbuffer8 = clCreateBuffer(clState.context, CL_MEM_READ_WRITE, bufsize, NULL, &status);
-			if (status != 0)
-			{
-				cout << "Buffer too big: allocation failed. Either raise 'lookup_gap' or lower 'gpu_thread_concurrency'." << endl;
-				throw string("");
-			}
-		}
 		for(uint thread_id = 0; thread_id < globalconfs.coin.threads_per_gpu; ++thread_id)
 		{
+			cl_mem padbuffer8;
+			if (globalconfs.coin.protocol == "litecoin")
+			{
+			uint lookup_gap = globalconfs.coin.config.GetValue<uint>("lookup_gap");
+			uint thread_concurrency = globalconfs.coin.config.GetValue<uint>("gpu_thread_concurrency");
+			uint itemsperthread = (1024/lookup_gap+(1024%lookup_gap>0));
+			uint bufsize = 128*itemsperthread*thread_concurrency;
+			cout << "LTC buffer size: " << bufsize/1024.0/1024.0 << "MB." << endl;
+			padbuffer8 = clCreateBuffer(clState.context, CL_MEM_READ_WRITE, bufsize, NULL, &status);
+				if (status != 0)
+				{
+					cout << "Buffer too big: allocation failed. Either raise 'lookup_gap' or lower 'gpu_thread_concurrency'." << endl;
+					throw string("");
+				}
+			}
 			GPUstate.commandQueue = clCreateCommandQueue(clState.context, devices[device_id], 0, &status);
-			if (thread_id == 0 && (globalconfs.coin.protocol == "solidcoin" || globalconfs.coin.protocol == "solidcoin3"))
+/*			if (thread_id == 0 && (globalconfs.coin.protocol == "solidcoin" || globalconfs.coin.protocol == "solidcoin3"))
 			{
 				clEnqueueWriteBuffer(GPUstate.commandQueue, padbuffer8, true, 0, 1024*1024*4+8, BlockHash_1_MemoryPAD8, 0, NULL, NULL);
 			}
+*/
 			if(status != CL_SUCCESS)
 				throw string("Error creating OpenCL command queue");
 
@@ -943,12 +993,19 @@ void OpenCL::Init()
 				throw string("Error creating OpenCL buffer");
 			}
 
-			GPUstate.offset = 0x100000000ULL/globalconfs.coin.threads_per_gpu/numDevices*(device_id*globalconfs.coin.threads_per_gpu+thread_id);
-
+			//GPUstate.offset = 0x100000000ULL/globalconfs.coin.threads_per_gpu/numDevices*(device_id*globalconfs.coin.threads_per_gpu+thread_id);
+			///@todo gpu offset is dependend on workrange we get from server, so we need to recalc this every getwork!
 			pthread_mutex_t initializer = PTHREAD_MUTEX_INITIALIZER;
-
+//			unsigned int fullspeed=400000; //ugly
+	//		singleoffset=fullspeed/(globalconfs.coin.threads_per_gpu*numDevices);
+//			if(thread_id==0)
+				GPUstate.offset  = globalconfs.coin.threads_per_gpu;
+//			else
+//				GPUstate.offset = (globalconfs.coin.threads_per_gpu*numDevices)*(device_id*globalconfs.coin.threads_per_gpu+thread_id);
+			cout <<  GPUstate.offset << " gpu offset for " << thread_id <<endl;
 			GPUstate.share_mutex = initializer;
 			GPUstate.shares_available = false;
+			GPUstate.noncerange_used = false;
 
 			GPUstate.vectors = GetVectorSize();
 			GPUstate.thread_id = device_id*numDevices+thread_id;
@@ -968,8 +1025,6 @@ void OpenCL::Init()
 		cout << i+1 << "...";
 		if (globalconfs.coin.protocol == "bitcoin")
 			pthread_create(&GPUstates[i].thread, NULL, Reap_GPU_BTC, (void*)&GPUstates[i]);
-		else if (globalconfs.coin.protocol == "solidcoin" || globalconfs.coin.protocol == "solidcoin3")
-			pthread_create(&GPUstates[i].thread, NULL, Reap_GPU_SLC, (void*)&GPUstates[i]);
 		else if (globalconfs.coin.protocol == "litecoin")
 			pthread_create(&GPUstates[i].thread, NULL, Reap_GPU_LTC, (void*)&GPUstates[i]);
 	}

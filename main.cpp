@@ -1,3 +1,5 @@
+//#define HEAVYDEBUG
+
 #include "Global.h"
 #include "App.h"
 
@@ -34,4 +36,5 @@ int main(int argc, char* argv[])
 	{
 		cout << humantime() << "Unknown error." << endl;
 	}
+	printf("ende");
 }

@@ -57,7 +57,14 @@ struct Work
 	vector<uchar> target_share;
 	vector<uchar> midstate;
 	vector<uint> precalc;
+	vector<uchar> noncerange;
+	unsigned int lastnonce;
+	unsigned int firstnonce;
 	bool old;
+	bool rangeused;
+	bool prediction_mode;
+	unsigned int prediction_res;
+	unsigned int prediction_depth;
 	clock_t time;
 	ullint ntime_at_getwork;
 };
@@ -71,6 +78,16 @@ public:
 	Share() {}
 	//Share(vector<uchar> data_, uint server_id_, uint user_id_) : server_id(server_id_),data(data_),user_id(user_id_) {}
 	Share(vector<uchar> data_,vector<uchar> target_, uint server_id_) : server_id(server_id_),data(data_),target(target_) {}
+};
+
+struct RangeOrderShare
+{
+	unsigned int server_id;
+	vector<uchar> data;
+	vector<uchar> rangeorder;
+public:
+	RangeOrderShare() {}
+	RangeOrderShare(vector<uchar> data_, unsigned int server_id_, vector<uchar> rangeorder_) : server_id(server_id_), data(data_), rangeorder(rangeorder_) {}	
 };
 
 vector<string> Explode(string str, char delim);

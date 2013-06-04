@@ -7,7 +7,7 @@ private:
 public:
 	void Init();
 	void Quit();
-
+	bool getwork_now;
 	static uint GetVectorSize();
 };
 
@@ -33,18 +33,20 @@ struct _clState
 	cl_program program;
 	cl_mem CLbuffer[2];
 	cl_mem padbuffer8;
-
+	cl_uint2 prediction_range;
 	uint vectors;
 	uint thread_id;
-	uint offset;
+	uint offset;//first nonce
 
 	pthread_t thread;
-
+	bool noncerange_used;
 	bool shares_available;
 	deque<Share> shares;
 	pthread_mutex_t share_mutex;
 
 	ullint hashes;
+	uint lastnonce;
+	uint roundnumber;
 };
 #endif
 

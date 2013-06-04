@@ -1,8 +1,6 @@
 #include "Global.h"
-#include "CPUMiner.h"
 #include "CPUAlgos.h"
 #include "Util.h"
-#include "RSHash.h"
 
 extern ullint cpu_shares_hwinvalid;
 extern ullint cpu_shares_hwvalid;

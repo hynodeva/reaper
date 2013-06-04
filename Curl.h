@@ -11,11 +11,13 @@ private:
 		GETWORK,
 		GETWORK_LP,
 		TESTWORK,
+		TESTWORK_NP,
+		GETWORK_NP
 	};
 
 	string Execute(ServerSettings& s, Curl::EXEC_TYPE type, string work, string path, uint timeout);
-	void Execute_SLC(void* curl, Curl::EXEC_TYPE type, string work, string path, uint timeout);
-	void Execute_BTC(void* curl, Curl::EXEC_TYPE type, string work, string path, uint timeout);
+	void Execute_BTC(void* curl, Curl::EXEC_TYPE type, string work, string path, uint timeout, uint hashespersec);
+	void Execute_LTC(void* curl, Curl::EXEC_TYPE type, string work, string path, uint timeout, uint hashespersec);
 
 public:
 
@@ -29,6 +31,8 @@ public:
 	void Quit(void* curl);
 
 	string GetWork_LP(ServerSettings& s, string path="", uint timeout = 60);
+	string GetWork_NP(ServerSettings& s, string path="", uint timeout = 5);
+	string TestWork_NP(ServerSettings& s, string path="");
 	string GetWork(ServerSettings& s, string path="", uint timeout = 5);
 	string TestWork(ServerSettings& s, string work);
 };

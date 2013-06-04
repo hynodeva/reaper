@@ -1,9 +1,11 @@
 #ifndef APP_H
 #define APP_H
 
+
+
+
 #include "Curl.h"
 #include "AppOpenCL.h"
-#include "CPUMiner.h"
 
 class App
 {
@@ -19,7 +21,6 @@ private:
 
 	Curl curl;
 	OpenCL opencl;
-	CPUMiner cpuminer;
 
 	clock_t workupdate;
 
@@ -27,7 +28,7 @@ private:
 
 	void SetupCurrency();
 
-	void Parse_SLC(string data);
+	void Parse_LTC(string data);
 	void Parse_BTC(string data);
 public:
 	void Main(vector<string> args);

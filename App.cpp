@@ -2,6 +2,16 @@
 #include "App.h"
 #include "Util.h"
 
+
+#ifdef WIN32
+#include "Winsock2.h"
+#endif
+#ifndef WIN32
+#define __LINUX__
+#endif
+#ifdef __LINUX__
+#include <arpa/inet.h>
+#endif
 #include "json/json.h"
 
 uchar HexToChar(char data)
@@ -16,10 +26,7 @@ uchar HexToChar(char data)
 
 #include "AppOpenCL.h"
 
-#ifndef CPU_MINING_ONLY
 extern vector<_clState> GPUstates;
-#endif
-extern vector<Reap_CPU_param> CPUstates;
 
 uchar HexToChar(char h, char l)
 {
@@ -86,6 +93,12 @@ SHARETEST_VALUE scanhash_scrypt(unsigned char *pdata, unsigned char* scratchbuf,
 
 bool getwork_now = false;
 
+void noncerangeused()
+{
+	printf("noncerangeused_switch\n");
+	getwork_now=true;
+}
+
 void SubmitShare(Curl& curl, Share& w, unsigned char* scratchbuf)
 {
 	if (w.data.size()%128 != 0)
@@ -119,7 +132,11 @@ void SubmitShare(Curl& curl, Share& w, unsigned char* scratchbuf)
 		{
 			SHARETEST_VALUE sharevalid = scanhash_scrypt(&w.data[0],scratchbuf,&w.target[0]);
 			if (sharevalid == ST_HNOTZERO)
+			{
+				
+				cout << "hwerrorshare: " << VectorToHexString(w.data) << "nonce: " << *(uint*)&w.data[76] << " with target " << VectorToHexString(w.target) << endl;
 				shares_hwinvalid++;
+			}
 			else if (sharevalid == ST_MORETHANTARGET)
 			{
 				shares_hwvalid++;
@@ -196,23 +213,28 @@ bool sharethread_active;
 void* ShareThread(void* param)
 {
 	cout << "Share thread started" << endl;
-	Curl* pcurl;
-
+	Curl* pcurl = new Curl();
+	//init curl for each sharethread (?)
+	pcurl->Init();
 	vector<uchar> btcpadding(48,0);
 	btcpadding[3] = 0x80;
 	btcpadding[44] = 0x80;
 	btcpadding[45] = 0x02;
 
-	unsigned char* scratchbuf = new unsigned char[131072];
 
 	while(!shutdown_now)
 	{
 		sharethread_active = true;
-		Wait_ms(50);
-#ifndef CPU_MINING_ONLY
+		Wait_ms(100);
 		foreachgpu()
 		{
 			sharethread_active = true;
+			if(it->noncerange_used)
+			{
+				noncerangeused();
+				it->noncerange_used=false;
+				continue;
+			}
 			if (!it->shares_available)
 				continue;
 			Share s;
@@ -224,49 +246,22 @@ void* ShareThread(void* param)
 				continue;
 			}
 			s = it->shares.front();
+//			Share ts(s.data,s.target,s.server_id);
 			it->shares.pop_front();
 			if (it->shares.empty())
 				it->shares_available = false;
 			pthread_mutex_unlock(&it->share_mutex);
 			uint currentserverid = s.server_id;
-			{
 				if (s.data.size() == 80)
 					s.data.insert(s.data.end(),btcpadding.begin(),btcpadding.end());
 				uint tiimm = ticker();
+				unsigned char* scratchbuf = new unsigned char[131072];
+				memset(scratchbuf,0,131072);
 				SubmitShare(*pcurl, s,scratchbuf);
 				tiimm = ticker()-tiimm;
 				if (tiimm > 5000)
 					cout << "Share submit took " << tiimm/1000.0 << " s!  " << endl;
-			}
-		}
-#endif
-		foreachcpu()
-		{
-			sharethread_active = true;
-			if (!it->shares_available)
-				continue;
-			Share s;
-			pthread_mutex_lock(&it->share_mutex);
-			if (it->shares.empty())
-			{
-				pthread_mutex_unlock(&it->share_mutex);
-				continue;
-			}
-			s = it->shares.front();
-			it->shares.pop_front();
-			if (it->shares.empty())
-				it->shares_available = false;
-			pthread_mutex_unlock(&it->share_mutex);
-			uint currentserverid = s.server_id;
-			{
-				if (s.data.size() == 80)
-					s.data.insert(s.data.end(),btcpadding.begin(),btcpadding.end());
-				uint tiimm = ticker();
-				SubmitShare(*pcurl, s,scratchbuf);
-				tiimm = ticker()-tiimm;
-				if (tiimm > 5000)
-					cout << "Share submit took " << tiimm/1000.0 << " s!  " << endl;
-			}
+				delete[] scratchbuf;
 		}
 	}
 	pthread_exit(NULL);
@@ -282,7 +277,6 @@ struct LongPollThreadParams
 	App* app;
 };
 
-#include "RSHash.h"
 
 void* LongPollThread(void* param)
 {
@@ -393,9 +387,10 @@ void App::SetupCurrency()
 			c.global_worksize /= c.local_worksize;
 			c.global_worksize *= c.local_worksize;
 		}
+		c.kernellocal_worksize = 1;
+		c.kernellocal_worksize = c.config.GetValue<uint>("localworksize");
+		c.use_noncerange_staticspeed=c.config.GetValue<uint>("use_noncerange_staticspeed");
 		c.threads_per_gpu = c.config.GetValue<uint>("threads_per_gpu");
-		c.cputhreads = c.config.GetValue<uint>("cpu_mining_threads");
-		c.cpu_algorithm = c.config.GetValue<string>("cpu_algorithm");
 
 		c.host = c.config.GetValue<string>("host");
 		c.port = c.config.GetValue<string>("port");
@@ -426,8 +421,6 @@ void App::SetupCurrency()
 		globalconfs.coin.sharekhs = pow(2.0,32.0)/1000.0;
 	if (globalconfs.coin.protocol == "litecoin")
 		globalconfs.coin.sharekhs = pow(2.0,16.0)/1000.0;
-	if (globalconfs.coin.protocol == "solidcoin" || globalconfs.coin.protocol == "solidcoin3")
-		globalconfs.coin.sharekhs = pow(2.0,17.0)/1000.0;
 
 	if (globalconfs.coin.cputhreads == 0 && globalconfs.coin.threads_per_gpu == 0)
 	{
@@ -454,20 +447,21 @@ void App::LoadServers()
 
 void App::Main(vector<string> args)
 {
-	cout << "\\|||||||||||||||||||||/" << endl;
-	cout << "-  Reaper " << REAPER_VERSION << " " << REAPER_PLATFORM << "  -" << endl;
-	cout << "-       BETA 4        -" << endl;
-	cout << "-   coded by mtrlt    -" << endl;
-	cout << "/|||||||||||||||||||||\\" << endl;
+	cout << "  \\||||||||||||||||||||||||||||||||/" << endl;
+	cout << "  -  Reaper " << REAPER_VERSION << " " << REAPER_PLATFORM << "   -" << endl;
+	cout << "  -       BETA 2           	     -" << endl;
+	cout << "  - 	 coded by mtrlt              -" << endl;
+	cout << "  -   coded by hynodeva(v14)        -" << endl;
+	cout << "  -    noncerange version           -" << endl;
+	cout << "  /||||||||||||||||||||||||||||||||\\" << endl;
 	cout << endl;
 	cout << "/----------------------------------------------\\" << endl;
-	cout << "| Please donate to support Reaper development! |" << endl;
+	cout << "| Please donate to support hynodeva Reaperv14 	|" << endl;
+	cout << "|         development and usersupport          |" << endl;
 	cout << "|----------------------------------------------|" << endl;
-	cout << "|   SLC: sdJMdNAEaJMVaxPFxaWibty9bec6Y4ubJK    |" << endl;
-	cout << "|   BTC: 1DjMcD5oQUap7kXrwa9J8S5esMryUs777o    |" << endl;
-	cout << "|   LTC: LZ5xurMLgdEzeuXuJvYB4DwyprCC1asfmp    |" << endl;
+	cout << "|   BTC: 121tW36VfBeJiiKT7n9Lh3JcNgaRSNSmPD    |" << endl;
+	cout << "|   LTC: Lge1SgXksM4JVEi2QpUuFRSRPX1F2mvUuR    |" << endl;
 	cout << "\\----------------------------------------------/" << endl;
-	cout << endl;
 	cout << endl;
 
 	string config_name = "reaper.conf";
@@ -482,7 +476,7 @@ void App::Main(vector<string> args)
 	config.Load(config_name);
 	SetupCurrency();
 	LoadServers();
-	Wait_ms(100);
+	Wait_ms(100);//ugly
 	nickbase = globalconfs.coin.user;
 
 	globalconfs.save_binaries = config.GetValue<bool>("save_binaries");
@@ -490,15 +484,8 @@ void App::Main(vector<string> args)
 	for(uint i=0; i<numdevices; ++i)
 		globalconfs.devices.push_back(config.GetValue<uint>("device", i));
 
-#ifdef CPU_MINING_ONLY
-	if (globalconfs.coin.cputhreads == 0)
-	{
-		throw string("cpu_mining_threads is zero. Nothing to do, quitting.");
-	}
-#endif
 	globalconfs.platform = config.GetValue<uint>("platform");
 
-	BlockHash_Init();
 	current_work.old = true;
 	current_work.time = 0;
 
@@ -511,9 +498,10 @@ void App::Main(vector<string> args)
 		for(uint i=1; i<globalconfs.coin.config.GetValue<uint>("sharethreads"); ++i)
 			pthread_create(&sharethread, NULL, ShareThread, &curl);
 	}
+	if (globalconfs.coin.config.GetValue<bool>("use_noncerange"))
 
+		cout << "noncerange support enabled" << endl;
 	opencl.Init();
-	cpuminer.Init();
 	current_server_id = (current_server_id+1)%servers.size();
 	Parse(curl.GetWork(servers[current_server_id]));
 
@@ -531,7 +519,9 @@ void App::Main(vector<string> args)
 		lp_params.curl = &curl;
 		pthread_create(&longpollthread, NULL, LongPollThread, &lp_params);
 	}
-
+#ifdef HEAVYDEBUG
+	cout << "done" << endl;
+#endif
 	if (config.GetValue<bool>("enable_graceful_shutdown"))
 	{
 		pthread_t shutdownthread;
@@ -566,29 +556,24 @@ void App::Main(vector<string> args)
 			cout << humantime() << "Share thread messed up. Starting another one.   " << endl;
 			pthread_create(&sharethread, NULL, ShareThread, &curl);
 		}
-		if (getwork_now || timeclock - workupdate >= work_update_period_ms)
+		if (opencl.getwork_now || getwork_now || timeclock - workupdate >= work_update_period_ms)
 		{
 			uint timmii = ticker();
 			current_server_id = (current_server_id+1)%servers.size();
+//			printf("fetching new work\n");
 			Parse(curl.GetWork(servers[current_server_id]));
 			timmii = ticker()-timmii;
 			if (timmii > 5000)
 				cout << "Getwork took " << timmii/1000.0 << " s!  " << endl;
 			getwork_now = false;
+			opencl.getwork_now=false;
 		}
 		if (timeclock - ticks >= 1000)
 		{
 			ullint totalhashesGPU=0;
-#ifndef CPU_MINING_ONLY
 			foreachgpu()
 			{
 				totalhashesGPU += it->hashes;
-			}
-#endif
-			ullint totalhashesCPU=0;
-			foreachcpu()
-			{
-				totalhashesCPU += it->hashes;
 			}
 
 			ticks += (timeclock-ticks)/1000*1000;
@@ -611,27 +596,20 @@ void App::Main(vector<string> args)
 						stream << spd/1000.0 << "MH/s, ";
 					else
 						stream << spd << "kH/s, ";
-				}
-				if (totalhashesCPU != 0)
-				{
-					stream << "CPU " << double(totalhashesCPU)/(ticks-starttime) << "kH/s, ";
+					servers[current_server_id].hashespersec=(unsigned int)(spd*1000);
 				}
 				stream << "shares: " << shares_valid << "|" << shares_invalid << ", stale " << stalepercent << "%, ";
 				float hwpercent = 100.0f*float(shares_hwinvalid)/float(shares_hwinvalid+shares_hwvalid);
 				if (shares_hwinvalid+shares_hwvalid > 0)
 					stream << "GPU errors: " << hwpercent << "%, ";
 				float cpuhwpercent = 100.0f*float(cpu_shares_hwinvalid)/float(cpu_shares_hwinvalid+cpu_shares_hwvalid);
-				if (cpu_shares_hwinvalid+cpu_shares_hwvalid > 0)
-					stream << "CPU errors: " << cpuhwpercent << "%, ";
 				cout << dec << stream.str() << "~" << 1000.0*(shares_hwvalid+cpu_shares_hwvalid)/double(ticks-starttime)*globalconfs.coin.sharekhs << " kH/s, " << (ticks-starttime)/1000 << "s  \r";
 				cout.flush();
 			}
 		}
 	}
-	cpuminer.Quit();
 	opencl.Quit();
 	Curl::GlobalQuit();
-	BlockHash_DeInit();
 }
 
 bool targetprinted=false;
@@ -652,74 +630,20 @@ void App::Parse(string data)
 
 		return;
 	}
-
-	if (globalconfs.coin.protocol == "bitcoin" || globalconfs.coin.protocol == "litecoin")
+#ifdef HEAVYDEBUG
+	cout << "start parsing server answer" <<endl;
+#endif
+	if (globalconfs.coin.protocol == "litecoin" )
+		Parse_LTC(data);
+	if (globalconfs.coin.protocol == "bitcoin" )
 		Parse_BTC(data);
-	if (globalconfs.coin.protocol == "solidcoin" || globalconfs.coin.protocol == "solidcoin3")
-		Parse_SLC(data);
+#ifdef HEAVYDEBUG
+	cout << "parsing server answer done" <<endl;
+#endif
 }
-
-void App::Parse_SLC(string data)
-{
-	Json::Value root, result, error;
-	Json::Reader reader;
-	bool parsing_successful = reader.parse( data, root );
-	if (!parsing_successful)
-	{
-		goto got_error;
-	}
-
-	result = root.get("result", "null");
-	error = root.get("error", "null");
-
-	if (result.isObject())
-	{
-		Json::Value::Members members = result.getMemberNames();
-		uint neededmembers=0;
-		for(Json::Value::Members::iterator it = members.begin(); it != members.end(); ++it)
-		{
-			if (*it == "data")
-				++neededmembers;
-		}
-		if (neededmembers != 1 || !result["data"].isString())
-		{
-			goto got_error;
-		}
-	
-		++getworks;
-		Work newwork;
-		newwork.data = HexStringToVector(result["data"].asString());
-		newwork.old = false;
-		newwork.time = ticker();
-		current_work_time = ticker();
-		newwork.server_id = current_server_id;
-
-		if (!targetprinted)
-		{
-			targetprinted = true;
-			cout << "target_share: " << result["target_share"].asString() << endl;
-		}
-		newwork.target_share = HexStringToVector(result["target_share"].asString().substr(2));
-		newwork.ntime_at_getwork = (*(ullint*)&newwork.data[76]) + 1;
-
-		current_work.time = ticker();
-		pthread_mutex_lock(&current_work_mutex);
-		current_work = newwork;
-		pthread_mutex_unlock(&current_work_mutex);
-		return;
-	}
-	else if (!error.isNull())
-	{
-		cout << humantime() << error.asString() << endl;
-		cout << humantime() << "Code " << error["code"].asInt() << ", \"" << error["message"].asString() << "\"" << endl;
-	}
-got_error:
-	cout << humantime() << "Error with server: " << data << endl;
-	return;
-}
-void Precalc_BTC(Work& work, uint vectors);
 vector<uchar> CalculateMidstate(vector<uchar> in);
-void App::Parse_BTC(string data)
+
+void App::Parse_LTC(string data)
 {
 	Json::Value root, result, error;
 	Json::Reader reader;
@@ -737,12 +661,16 @@ void App::Parse_BTC(string data)
 		Json::Value::Members members = result.getMemberNames();
 		uint neededmembers=0;
 		bool has_midstate = false;
+		bool has_noncerange = false;
 		for(Json::Value::Members::iterator it = members.begin(); it != members.end(); ++it)
 		{
 			if (*it == "data")
 				++neededmembers;
 			if (*it == "midstate")
 				has_midstate = true;
+			if(globalconfs.coin.config.GetValue<bool>("use_noncerange")==true)
+				if (*it == "noncerange")
+					has_noncerange = true;
 		}
 		if (neededmembers != 1 || !result["data"].isString())
 		{
@@ -756,6 +684,25 @@ void App::Parse_BTC(string data)
 		else
 			newwork.midstate = CalculateMidstate(HexStringToVector(result["data"].asString().substr(0,128)));
 		newwork.data = HexStringToVector(result["data"].asString().substr(0, 160));
+		
+		if(has_noncerange)
+		{
+#ifdef HEAVYDEBUG
+			printf("parsing noncerange:");
+#endif
+			newwork.noncerange=HexStringToVector(result["noncerange"].asString());
+			newwork.lastnonce=ntohl(*(unsigned int*)(&newwork.noncerange[4*sizeof(char)]));
+			newwork.firstnonce=ntohl(*(unsigned int*)(&newwork.noncerange[0]));
+			//we may use first & lastnonce flag in json response, so we dont have to mess around with ntohl
+#ifdef HEAVYDEBUG
+			printf("firstnonce: %X lastnonce: %X |%s\n",newwork.firstnonce,newwork.lastnonce,result["noncerange"].asString().c_str()); 
+#endif
+		}
+		else
+		{
+			newwork.firstnonce=0;
+			newwork.lastnonce=0xFFFFFFFF;
+		}
 		newwork.old = false;
 		newwork.time = ticker();
 		current_work_time = ticker();
@@ -779,7 +726,104 @@ void App::Parse_BTC(string data)
 			}
 			newwork.server_id = current_server_id;
 		}
+		current_work.time = ticker();
+		pthread_mutex_lock(&current_work_mutex);
+//		printf("overwrite currentwork item\n");
+		current_work = newwork;
+		pthread_mutex_unlock(&current_work_mutex);
+		current_server_id = (current_server_id+1)%servers.size();
+		return;
+	}
+	else if (!error.isNull())
+	{
+		cout << error.asString() << endl;
+		cout << "Code " << error["code"].asInt() << ", \"" << error["message"].asString() << "\"" << endl;
+	}
+got_error:
+	cout << "Error with server: " << data << endl;
+	return;
+}
 
+
+void Precalc_BTC(Work& work, uint vectors);
+void App::Parse_BTC(string data)
+{
+	Json::Value root, result, error;
+	Json::Reader reader;
+	bool parsing_successful = reader.parse( data, root );
+	if (!parsing_successful)
+	{
+		goto got_error;
+	}
+
+	result = root.get("result", "null");
+	error = root.get("error", "null");
+	
+	if (result.isObject())
+	{
+		Json::Value::Members members = result.getMemberNames();
+		uint neededmembers=0;
+		bool has_midstate = false;
+		bool has_noncerange = false;
+		for(Json::Value::Members::iterator it = members.begin(); it != members.end(); ++it)
+		{
+			if (*it == "data")
+				++neededmembers;
+			if (*it == "midstate")
+				has_midstate = true;
+			if (*it == "noncerange")
+				has_noncerange = true;
+		}
+		if (neededmembers != 1 || !result["data"].isString())
+		{
+			goto got_error;
+		}
+
+		++getworks;
+		Work newwork;
+		if (has_midstate)
+			newwork.midstate = HexStringToVector(result["midstate"].asString());
+		else
+			newwork.midstate = CalculateMidstate(HexStringToVector(result["data"].asString().substr(0,128)));
+		newwork.data = HexStringToVector(result["data"].asString().substr(0, 160));
+		if(has_noncerange)
+		{
+			newwork.noncerange=HexStringToVector(result["noncerange"].asString());
+			newwork.lastnonce=ntohl(*(unsigned int*)(&newwork.noncerange[4*sizeof(char)]));
+			newwork.firstnonce=ntohl(*(unsigned int*)(&newwork.noncerange[0]));
+			//we may use first & lastnonce flag in json response, so we dont have to mess around with ntohl
+#ifdef HEAVYDEBUG
+			printf("firstnonce: %X lastnonce: %X |%s\n",newwork.firstnonce,newwork.lastnonce,result["noncerange"].asString().c_str()); 
+#endif
+		}
+		else
+		{
+			newwork.firstnonce=0;
+			newwork.lastnonce=0xFFFFFFFF;
+		}
+		newwork.old = false;
+		newwork.time = ticker();
+		current_work_time = ticker();
+
+		if (!targetprinted)
+		{
+			targetprinted = true;
+			cout << result["target"].asString() << endl;
+		}
+
+		{
+			vector<uchar> targetuchar = HexStringToVector(result["target"].asString());
+			newwork.target_share.assign(32,0);
+			for(uint i=0; i<8; ++i)
+			{
+				uint number = (((uint*)(&targetuchar[0]))[i]);
+				newwork.target_share[4*i] = number;
+				newwork.target_share[4*i+1] = number>>8;
+				newwork.target_share[4*i+2] = number>>16;
+				newwork.target_share[4*i+3] = number>>24;
+			}
+			newwork.server_id = current_server_id;
+		}
 		Precalc_BTC(newwork,opencl.GetVectorSize());
 		current_work.time = ticker();
 		pthread_mutex_lock(&current_work_mutex);

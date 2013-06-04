@@ -359,16 +359,18 @@ SHARETEST_VALUE scanhash_scrypt(unsigned char *pdata, unsigned char* scratchbuf,
 {
 	uint data[20], hash[8];
 	uint Htarg = *(uint*)(ptarget+28);
+//	unsigned char * scratchbuffer=new unsigned char[131072];
 
 	
 
 	for (int i = 0; i < 20; i++)
 		data[i] = EndianSwap(((uint*)pdata)[i]);
-	scrypt_1024_1_1_256_sp(data, hash, scratchbuf);
+	scrypt_1024_1_1_256_sp(data, hash, &scratchbuf[0]);
 
 	SHARETEST_VALUE ret;
 	if (hash[7] > 0xFFFF)
 	{
+		//printf("hashresult: %X %X\n", hash[6],hash[7]);
 		return ST_HNOTZERO;
 	}
 	if (hash[7] < Htarg || (hash[7] == Htarg && test_lower_hash(hash, (uint *)ptarget)))

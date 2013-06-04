@@ -28,12 +28,13 @@ struct Coin
 	string name;
 	string protocol;
 	Config config;
-	uint global_worksize;
-	uint local_worksize;
+	uint global_worksize;//2^(aggression-1)
+	uint local_worksize;//2nd dim worksize for kernel, value out of configfile
+	uint kernellocal_worksize;//internel local kernel worksize
 	uint threads_per_gpu;
 	bool max_aggression;
-	double sharekhs;
-
+	double sharekhs;//this is due lookup accuracy in kernels. 16bit easy target for ltc
+	uint use_noncerange_staticspeed;
 	uint cputhreads;
 	string cpu_algorithm;
 	string host,port,user,pass,proxy;
@@ -44,6 +45,7 @@ struct GlobalConfs
 	bool save_binaries;
 	vector<uint> devices;
 	uint platform;
+	bool use_noncerange;
 	Coin coin;
 };
 
@@ -58,7 +60,9 @@ extern GlobalConfs globalconfs;
 extern bool shutdown_now;
 
 const uint KERNEL_INPUT_SIZE = 128;
+//@todo consider raise that up  to 2048 for large scale computing
 const uint KERNEL_OUTPUT_SIZE = 256;
+//attention this should be set to res*depth
 
 const uint WORK_EXPIRE_TIME_SEC = 120;
 const uint SHARE_THREAD_RESTART_THRESHOLD_SEC = 20;
@@ -70,7 +74,6 @@ const uint RUNTIMES_SIZE = 16;
 const uint CPU_BATCH_SIZE = 1024;
 
 #define foreachgpu() for(vector<_clState>::iterator it = GPUstates.begin(); it != GPUstates.end(); ++it)
-#define foreachcpu() for(vector<Reap_CPU_param>::iterator it = CPUstates.begin(); it != CPUstates.end(); ++it)
 
 #if defined(_M_X64) || defined(__x86_64__)
 #define REAPER_PLATFORM "64-bit"
