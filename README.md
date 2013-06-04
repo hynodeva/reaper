@@ -9,8 +9,8 @@ open source and licensed under the GPL 3.0.
 
 Reaper is commonly used for scrypt mining.
 
-Reaper works on both ATI and Nvidia GPUs. Although ATI GPUs appear to be way
-more efficient, many types of GPU remain untested.
+Reaper works on all GPUs which support OpenCL. Currently you can obtain OpenCL libs for Intel, AMD, and Nvidia devices.
+Although ATI GPUs appear to be way more efficient, many types of GPU remain untested.
 
 How to use
 ----------
@@ -64,7 +64,10 @@ The size of the work sent to the GPU thread. Experiment with different values to
 find the fastest hash rate for your setup. 128 seems to be optimal for most
 setups.
 
-Recommended values: 32, 64, 128, 256
+Recommended values: 16, 32, 64, 128, 256
+Hynodeva: Use lower values for CPU-OpenCL
+			Use higher values for new GPUs
+reaperv14: worksize can now exceed 256
 
     kernel [filename]
 
@@ -93,11 +96,10 @@ can press "Q" then "Enter" to shut down Reaper gracefully.
 
 Recommended value: yes
 
-In v11, the following options were added:
 
 	long_polling [yes/no]
 	
-Whether to enable the experimental long polling support.
+Whether to enable the long polling support.
 
 Recommended value: yes
 
@@ -122,12 +124,61 @@ Loads a config file and its settings.
 #proxy settings
 #include directive in config
 
+getwork_rate [ms]
+
+sets the getwork refresh in miliseconds (should be at least 1000, 5000 is recommend, 7500 default)
+
+use_noncerange [true/false]
+
+enabled noncerange support (experimental)
+
+use_noncerange_staticspeed [number]
+
+sets the speed which is reported to server when using noncerange
+do not set this much lower then your hashspeed is, otherwise you will spam only getworks without hashing.
+
+
+thread_concurrency [number]
+
+should be a multiple of worksize, this sets the buffer size when hashing scrypt coins
+
+lookup_gap [number]
+
+this sets the shader/memory tradeoff which is used when hashing scrypt on GPUs
+can be 1 to N(1024 in case of litecoin, current nfactor in case of yacoin)
+usually 2 is best.
+known expections:
+	using CPU-OpenCL with reaper (mostly 1 best, thread_concurrency should be L2 cache size / 128kb  ,worksize CPUCores)
+	ATI 4890 Vapor-X (1 best, with 4096 thread concurrency & workersize 64)
+
+mine [coinname]
+
+sets the coin protocol which is used for mining.
+currently supported:
+
+bitcoin (all sha256d coins)
+
+litecoin (all scrypt 1024_1_1_8 coins)
+
+UPCOMING:
+
+yacoin (scrypt with variable N & Keccak/Cacha)
+
+netcoin (scrypt multiple setups)
+
+terracoin& ppcoin same as bitcoin, just for having the opportunity of a seperate coin config file
+feathercoin - same as litecoin, just for having the opportunity of a seperate coin config file
 
 Compiling
 ---------
 
+Requirements:
+
+CMake
+opencl header files (AMD SDK e.g., or Intel OpenCL SDK)
+
 Reaper is compiled using [CMake](http://www.cmake.org/). If you're on Windows,
-you can use the supplied cmake-win.cmd batch file. Otherwise, issue the
+you can use the supplied >>cmake-win.cmd<< batch file. Under Linux, there is a >>cmake-linux.sh<< Otherwise, issue the
 following commands in the reaper directory:
 
     mkdir build
@@ -135,9 +186,6 @@ following commands in the reaper directory:
     cmake -D CMAKE_BUILD_TYPE=Release ..
     make
 
-If you want to disable compiling the OpenCL part, issue this command:
-
-    cmake -D CMAKE_BUILD_TYPE=Release -D CPU_MINING_ONLY=ON ..
 
 After compiling you can move the resulting `reaper` binary where you want, but
 make sure to take along the `reaper.cl` kernel file as well as the `reaper.conf`
