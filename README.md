@@ -124,21 +124,21 @@ Loads a config file and its settings.
 #proxy settings
 #include directive in config
 
-getwork_rate [ms]
+	getwork_rate [ms]
 
 sets the getwork refresh in miliseconds (should be at least 1000, 5000 is recommend, 7500 default)
 
-use_noncerange [true/false]
+	use_noncerange [true/false]	
 
 enabled noncerange support (experimental)
 
-use_noncerange_staticspeed [number]
+	use_noncerange_staticspeed [number]
 
 sets the speed which is reported to server when using noncerange
 do not set this much lower then your hashspeed is, otherwise you will spam only getworks without hashing.
 
 
-thread_concurrency [number]
+	thread_concurrency [number]
 
 should be a multiple of worksize, this sets the buffer size when hashing scrypt coins
 
@@ -151,7 +151,7 @@ known expections:
 	using CPU-OpenCL with reaper (mostly 1 best, thread_concurrency should be L2 cache size / 128kb  ,worksize CPUCores)
 	ATI 4890 Vapor-X (1 best, with 4096 thread concurrency & workersize 64)
 
-mine [coinname]
+	mine [coinname]
 
 sets the coin protocol which is used for mining.
 currently supported:
