@@ -1,0 +1,84 @@
+download & install visual studio (no express)
+download & install cmake
+download & install AMD-APP-SDK
+
+reboot
+
+download reaper
+url1
+url2
+
+(extract)
+
+open windows explorer and go into extracted folder 
+run the 
+`cmake-win.bat` 
+.... wait
+
+go into build(64) folder 
+
+doubleclick on reaper.sln
+
+You will need to add a library to the Linker ( and remove a code generation option of you want to compile debug support )
+[thinking about putting into cmake config where it belongs]
+add to linker input:
+"Ws2_32.lib;"
+...
+
+code generation : remove rct1 option set to default
+
+build programm
+
+set up config files
+
+go back into explorer
+go into subfolder Release 
+run
+reaper.exe
+
+reaper should run now.
+
+
+Config files
+
+reaper.conf
+
+
+
+litecoin.conf
+
+host hynodeva.eu
+port 45555
+user litecoin
+pass litecoin
+
+
+protocol litecoin
+
+worksize 16
+aggression 11
+threads_per_gpu 1
+sharethreads 12
+lookup_gap 1
+gpu_thread_concurrency 1024
+
+reaperv14 NR:
+use_noncerange true
+gpu_sharemask 0xFFFF
+localworksize 1
+vectors 1
+
+
+bitcoin.conf
+
+host hynodeva.eu
+port 45556
+user bitcoin
+pass bitcoin
+
+protocol bitcoin
+
+worksize 128
+aggression 13
+threads_per_gpu 1
+vectors 2
